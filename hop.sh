@@ -180,9 +180,30 @@ backend() {
     fi
 }
 
+# 一键 curl 会把脚本放在临时目录。开机服务改用固定副本，避免重启后文件消失。
+persist_bin() {
+    local bin name dest
+    bin=$(readlink -f "$0")
+    name=$(basename "$bin")
+    case "$bin" in
+        /tmp/*|/var/tmp/*|/dev/fd/*|/proc/self/fd/*) ;;
+        *)
+            if [[ -z "${TMPDIR:-}" || "$bin" != "${TMPDIR%/}"/* ]]; then
+                printf '%s' "$bin"
+                return
+            fi
+            ;;
+    esac
+    dest="/usr/local/lib/hy2/$name"
+    mkdir -p /usr/local/lib/hy2
+    cp -f "$bin" "$dest"
+    chmod 755 "$dest"
+    printf '%s' "$dest"
+}
+
 persist_unit() {
     local bin unit
-    bin=$(readlink -f "$0")
+    bin=$(persist_bin)
     unit=/etc/systemd/system/hysteria-hop.service
     cat > "$unit" <<EOF
 [Unit]

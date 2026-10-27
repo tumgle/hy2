@@ -3,15 +3,17 @@
 # 不安装 v2node / hysteria 程序。v2node 需要已经在听 UDP 443。
 # 密码只用来打印分享链接，不写入规则或开机服务。
 #
+#   bash <(curl -fsSL https://raw.githubusercontent.com/tumgle/hy2/main/install.sh)
 #   sudo ./install.sh
 #   sudo ./install.sh --server example.com --password '密码' --sni bing.com
 #   sudo ./install.sh --landing 203.0.113.10 --server relay.example.com --password '密码'
 
 set -euo pipefail
 
-DIR=$(cd "$(dirname "$0")" && pwd)
-HOP="$DIR/hop.sh"
-RELAY="$DIR/relay.sh"
+RAW_BASE=https://raw.githubusercontent.com/tumgle/hy2/main
+HOP=""
+RELAY=""
+WORK=""
 
 LISTEN=443
 START=30000
@@ -30,9 +32,10 @@ usage() {
 一键设置 Hysteria2 端口跳跃。端口固定为 UDP ${START}:${END} -> ${LISTEN}，并开机加载。
 
 用法:
-  sudo $0
-  sudo $0 --server example.com --password '密码' --sni bing.com
-  sudo $0 --landing 203.0.113.10 --server relay.example.com --password '密码'
+  bash <(curl -fsSL https://raw.githubusercontent.com/tumgle/hy2/main/install.sh)
+  sudo ./install.sh
+  sudo ./install.sh --server example.com --password '密码' --sni bing.com
+  sudo ./install.sh --landing 203.0.113.10 --server relay.example.com --password '密码'
 
 选项:
   --landing IP    落地机公网 IP。留空则只做本机跳跃
@@ -50,8 +53,49 @@ die() {
     exit 1
 }
 
-need_root() {
-    [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "请用 root 运行: sudo $0"
+run_root() {
+    if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+        "$@"
+    else
+        command -v sudo >/dev/null 2>&1 || die "需要 root。请用 root 打开终端后再执行"
+        sudo "$@"
+    fi
+}
+
+cleanup() {
+    if [[ -n "$WORK" ]]; then
+        rm -rf "$WORK"
+    fi
+}
+trap cleanup EXIT
+
+sibling_helpers() {
+    local src dir
+    src=${BASH_SOURCE[0]}
+    dir=$(dirname "$src")
+    [[ -f "$dir/hop.sh" && -f "$dir/relay.sh" ]] || return 1
+    dir=$(cd "$dir" && pwd)
+    HOP="$dir/hop.sh"
+    RELAY="$dir/relay.sh"
+}
+
+fetch_helpers() {
+    command -v curl >/dev/null 2>&1 || die "需要 curl 才能下载 hop.sh 和 relay.sh"
+    WORK=$(mktemp -d)
+    echo "旁边没有 hop.sh / relay.sh，下载到临时目录"
+    curl -fsSL "${RAW_BASE}/hop.sh" -o "$WORK/hop.sh"
+    curl -fsSL "${RAW_BASE}/relay.sh" -o "$WORK/relay.sh"
+    [[ -s "$WORK/hop.sh" && -s "$WORK/relay.sh" ]] || die "下载 hop.sh 或 relay.sh 失败"
+    chmod 755 "$WORK/hop.sh" "$WORK/relay.sh"
+    HOP="$WORK/hop.sh"
+    RELAY="$WORK/relay.sh"
+}
+
+locate_helpers() {
+    if sibling_helpers; then
+        return
+    fi
+    fetch_helpers
 }
 
 need_value() {
@@ -119,7 +163,7 @@ prompt_required() {
     current="${!__var}"
     [[ -n "$current" ]] && return
     if [[ ! -t 0 ]]; then
-        die "缺少${__prompt}。交互运行 sudo $0，或传入对应参数"
+        die "缺少${__prompt}。请在终端运行，或传入对应参数"
     fi
     if [[ -n "$__secret" ]]; then
         read -r -s -p "${__prompt}: " reply
@@ -159,25 +203,28 @@ validate() {
     if [[ -z "$SNI" ]]; then
         SNI="$SNI_DEFAULT"
     fi
-    [[ -f "$HOP" && -f "$RELAY" ]] || die "缺少 hop.sh 或 relay.sh"
+}
+
+root_has() {
+    run_root bash -c 'command -v "$1" >/dev/null 2>&1' bash "$1"
 }
 
 ensure_iptables() {
-    command -v iptables >/dev/null 2>&1 && return
+    root_has iptables && return
     command -v apt-get >/dev/null 2>&1 || die "中转需要 iptables。Debian/Ubuntu: apt-get install -y iptables"
     echo "未找到 iptables，将安装"
-    apt-get update
-    apt-get install -y iptables
+    run_root apt-get update
+    run_root apt-get install -y iptables
 }
 
 ensure_firewall() {
-    if command -v iptables >/dev/null 2>&1 || command -v nft >/dev/null 2>&1; then
+    if root_has iptables || root_has nft; then
         return
     fi
     command -v apt-get >/dev/null 2>&1 || die "没有 iptables 或 nft。Debian/Ubuntu: apt-get install -y iptables"
     echo "未找到 iptables 或 nft，将安装 iptables"
-    apt-get update
-    apt-get install -y iptables
+    run_root apt-get update
+    run_root apt-get install -y iptables
 }
 
 relay_landing_from_unit() {
@@ -193,11 +240,11 @@ apply_local() {
     if [[ -n "$old" ]]; then
         echo "去掉已有中转: $old"
         ensure_iptables
-        bash "$RELAY" --landing "$old" --listen "$LISTEN" --range "$RANGE" --delete
+        run_root bash "$RELAY" --landing "$old" --listen "$LISTEN" --range "$RANGE" --delete
     fi
     ensure_firewall
     echo "应用本机端口跳跃并开机加载"
-    bash "$HOP" --listen "$LISTEN" --range "$RANGE" --persist
+    run_root bash "$HOP" --listen "$LISTEN" --range "$RANGE" --persist
 }
 
 apply_relay() {
@@ -206,11 +253,11 @@ apply_relay() {
     old=$(relay_landing_from_unit)
     if [[ -n "$old" && "$old" != "$LANDING" ]]; then
         echo "去掉旧的落地: $old"
-        bash "$RELAY" --landing "$old" --listen "$LISTEN" --range "$RANGE" --delete
+        run_root bash "$RELAY" --landing "$old" --listen "$LISTEN" --range "$RANGE" --delete
     fi
-    bash "$HOP" --listen "$LISTEN" --range "$RANGE" --delete
+    run_root bash "$HOP" --listen "$LISTEN" --range "$RANGE" --delete
     echo "应用中转并开机加载"
-    bash "$RELAY" --landing "$LANDING" --listen "$LISTEN" --range "$RANGE" --persist
+    run_root bash "$RELAY" --landing "$LANDING" --listen "$LISTEN" --range "$RANGE" --persist
 }
 
 urlencode() {
@@ -239,12 +286,13 @@ print_link() {
 
 main() {
     parse_args "$@"
-    need_root
     prompt_landing
     prompt_required SERVER "服务器域名（中转时填中转域名）"
     prompt_required PASSWORD "密码" secret
     prompt_sni
     validate
+    locate_helpers
+    [[ -f "$HOP" && -f "$RELAY" ]] || die "缺少 hop.sh 或 relay.sh"
     echo
     echo "将要设置"
     echo "  跳跃: UDP ${RANGE}"
