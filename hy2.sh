@@ -156,7 +156,7 @@ local_menu() {
                 choose_iface || { pause; continue; }
                 echo "将把 UDP ${PORT_START}:${PORT_END} 转到本机 $LISTEN（网卡 $IFACE）"
                 confirm "确认应用?" || continue
-                run_hop || true
+                run_hop || echo "失败：本机规则没有写上"
                 pause
                 ;;
             2)
@@ -173,12 +173,12 @@ local_menu() {
                 ;;
             5)
                 confirm "删除本机 ${PORT_START}:${PORT_END} -> $LISTEN 的规则?" || continue
-                run_hop --delete || true
+                run_hop --delete || echo "失败：本机规则没有删除"
                 pause
                 ;;
             6)
                 confirm "开机自动应用当前本机规则?" || continue
-                run_hop --persist || true
+                run_hop --persist || echo "失败：开机服务没有写上"
                 pause
                 ;;
             0)
@@ -221,7 +221,7 @@ relay_menu() {
                 choose_iface || { pause; continue; }
                 echo "将把 UDP ${PORT_START}:${PORT_END} 转到 $LANDING:$LISTEN（网卡 $IFACE）"
                 confirm "确认应用?" || continue
-                run_relay || true
+                run_relay || echo "失败：转发规则没有写上"
                 pause
                 ;;
             2)
@@ -243,13 +243,13 @@ relay_menu() {
             6)
                 [[ -n "$LANDING" ]] || configure_landing
                 confirm "删除转到 $LANDING:$LISTEN 的规则，以及同范围的本机 to::$LISTEN ?" || continue
-                run_relay --delete || true
+                run_relay --delete || echo "失败：转发规则没有删除"
                 pause
                 ;;
             7)
                 [[ -n "$LANDING" ]] || configure_landing
                 confirm "开机自动应用当前中转规则?" || continue
-                run_relay --persist || true
+                run_relay --persist || echo "失败：开机服务没有写上"
                 pause
                 ;;
             0)

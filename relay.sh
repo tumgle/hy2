@@ -136,17 +136,18 @@ delete_matching() {
 delete_rules() {
     local n
     n=$(delete_matching nat PREROUTING -i "$IFACE" -p udp --dport "$RANGE" -j DNAT --to-destination "$LANDING:$LISTEN")
-    [[ "$n" -eq 1 ]] && echo "已删除: $RANGE -> $LANDING:$LISTEN"
+    if [[ "$n" -eq 1 ]]; then echo "已删除: $RANGE -> $LANDING:$LISTEN"; fi
     n=$(delete_matching nat PREROUTING -i "$IFACE" -p udp --dport "$RANGE" -j DNAT --to-destination ":$LISTEN")
-    [[ "$n" -eq 1 ]] && echo "已删除本机规则: $RANGE -> :$LISTEN"
+    if [[ "$n" -eq 1 ]]; then echo "已删除本机规则: $RANGE -> :$LISTEN"; fi
     n=$(delete_matching nat POSTROUTING -p udp -d "$LANDING" --dport "$LISTEN" -j MASQUERADE)
-    [[ "$n" -eq 1 ]] && echo "已删除 MASQUERADE: $LANDING:$LISTEN"
+    if [[ "$n" -eq 1 ]]; then echo "已删除 MASQUERADE: $LANDING:$LISTEN"; fi
     n=$(delete_matching filter FORWARD -p udp -d "$LANDING" --dport "$LISTEN" -j ACCEPT)
-    [[ "$n" -eq 1 ]] && echo "已删除 FORWARD: $LANDING:$LISTEN"
+    if [[ "$n" -eq 1 ]]; then echo "已删除 FORWARD: $LANDING:$LISTEN"; fi
+    return 0
 }
 
 apply_rules() {
-    delete_rules >/dev/null
+    delete_rules >/dev/null || true
     sysctl -w net.ipv4.ip_forward=1 >/dev/null
     iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport "$RANGE" -j DNAT --to-destination "$LANDING:$LISTEN"
     iptables -t nat -A POSTROUTING -p udp -d "$LANDING" --dport "$LISTEN" -j MASQUERADE
